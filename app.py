@@ -1,25 +1,17 @@
-# app.py - Streamlit Dashboard for Crime Reporting DB
+# app.py - Streamlit Dashboard for Crime Reporting DB using SQLite3
 
 import streamlit as st
 import pandas as pd
-import psycopg2
-from psycopg2 import sql
+import sqlite3
+import time
 
 # --- Streamlit Page Config ---
 st.set_page_config(page_title="Crime Dashboard", layout="wide")
 st.title("🚨 Buffalo Crime Reporting Dashboard")
 
-
 # --- Database Connection ---
 def get_connection():
-    return psycopg2.connect(
-        host=st.secrets["db"]["host"],
-        port=st.secrets["db"]["port"],
-        database=st.secrets["db"]["database"],
-        user=st.secrets["db"]["user"],
-        password=st.secrets["db"]["password"]
-
-    )
+    return sqlite3.connect('crime_reporting_with_indexes.db')
 
 def get_filter_options():
     conn = get_connection()
@@ -41,27 +33,41 @@ selected_neighborhood = st.sidebar.selectbox("Select Neighborhood:", options=[""
 selected_day = st.sidebar.selectbox("Day of Week:", options=["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
 
 
-# --- Filtered Incident Data ---
+
 def fetch_data():
     query = """
     SELECT i.datetime, i.incident_type_primary, l.neighbourhood
     FROM incident i
     JOIN location l ON i.incident_id = l.incident_id
-    WHERE (%s = '' OR i.incident_type_primary ILIKE %s)
-      AND (%s = '' OR l.neighbourhood ILIKE %s)
+    WHERE (? = '' OR i.incident_type_primary LIKE ?)
+      AND (? = '' OR l.neighbourhood LIKE ?)
     ORDER BY i.datetime DESC
     LIMIT 500
-"""
+    """
 
     params = (selected_type, f"%{selected_type}%", selected_neighborhood, f"%{selected_neighborhood}%")
     conn = get_connection()
+    
+    # Start timing
+    start_time = time.time()
+    
     df = pd.read_sql_query(query, conn, params=params)
+    
+    # End timing
+    end_time = time.time()
+    
+    query_duration = end_time - start_time
+    
     conn.close()
-    return df
+    
+    return df, query_duration
+
 
 # --- Load and Display Filtered Data ---
 st.subheader("📄 Recent Crime Incidents")
-data = fetch_data()
+data, query_time = fetch_data()
+st.write(f"⏱️ Query executed in {query_time:.2f} seconds.")
+
 st.dataframe(data, use_container_width=True)
 
 # --- Charts ---
@@ -90,16 +96,19 @@ if st.button("Run Query"):
         try:
             conn = get_connection()
             cursor = conn.cursor()
+            start = time.time()
             cursor.execute(user_query)
+            end = time.time()
+            query_duration = end - start
             if user_query.strip().lower().startswith("select"):
                 result = cursor.fetchall()
-                cols = [desc[0] for desc in cursor.description]
+                cols = [description[0] for description in cursor.description]
                 result_df = pd.DataFrame(result, columns=cols)
-                st.success("✅ Query executed successfully.")
+                st.success(f"✅ Query executed successfully in {query_duration:.2f} seconds.")
                 st.dataframe(result_df, use_container_width=True)
             else:
                 conn.commit()
-                st.success("✅ Query executed and committed successfully.")
+                st.success(f"✅ Query executed and committed in {query_duration:.2f} seconds.")
             cursor.close()
             conn.close()
         except Exception as e:
